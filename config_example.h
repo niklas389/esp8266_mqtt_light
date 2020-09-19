@@ -24,4 +24,4 @@ const char* topic_led2_state    =   "";
 bool restoreAfterReboot         =   true;
 String clientVer                =   "1.4";
 bool DEBUGGING                  =   true;
-const int pwm_freq              =   512;
+const int pwm_range              =   512;

@@ -15,7 +15,7 @@ PubSubClient client(wifiClient);
 // int eeprom_led1 = 0;
 int led1_value = 0;
 int led2_value = 0;
-double range_multiplier = (pwm_freq / 100);
+double range_multiplier = (pwm_range / 100);
 bool single_light = true;
 
 // SETUP
@@ -31,31 +31,33 @@ void setup() {
     // Set PWM Freq to 19.2 kHz (Same as RPi)
     analogWriteFreq(19200);
     // Set PWM range to XXX (from 1023)
-    analogWriteRange(pwm_freq);  
+    analogWriteRange(pwm_range);  
+
+    EEPROM.begin(16);
 
     if (restoreAfterReboot) {
-        EEPROM.begin(4);
-        // int eeprom_savedValue = 0;
-        // EEPROM.get(0, eeprom_savedValue);
-        // if (eeprom_savedValue != 0) {
-        //     Serial.print("EEPROM value was: ");
-        //     Serial.println(eeprom_savedValue);
-        //     fadePWM(pin_led1, eeprom_savedValue * range_multiplier);
-
         int mem1 = 0;
         EEPROM.get(0, mem1);
         if (mem1 != 0) {
             Serial.print("EEPROM first value was: ");
             Serial.println(mem1);
-            fadePWM(pin_led1, mem1 * range_multiplier);
+            if (mem1 > 100) {
+                EEPROM.put(0, 0); 
+                } else {
+                fadePWM(pin_led1, mem1 * range_multiplier);
+            }
         }
 
         int mem2 = 0;
-        EEPROM.get(1, mem2);
+        EEPROM.get(4, mem2);
         if (mem2 =! 0) {
             Serial.print("EEPROM second value was: ");
             Serial.println(mem2);
-            fadePWM(pin_led1, mem2 * range_multiplier);
+            if (mem2 > 100) {
+                EEPROM.put(4, 0); 
+                } else {
+                fadePWM(pin_led2, mem2 * range_multiplier);
+            }
         }
     }
     
@@ -164,47 +166,26 @@ void callback(char* topic, byte* payload, unsigned int length)
         Serial.println("FADE - LED 1");
         fadePWM(pin_led1, int(intPayload * range_multiplier));
         // Save to EEPROM if restoreAfterReboot is set true
-        if (restoreAfterReboot == true) { EEPROM.put(0, intPayload); EEPROM.commit(); }
+        EEPROM.put(0, intPayload); EEPROM.commit();
     }
 
     if (newTopic == topic_led2) {
         Serial.println("FADE - LED 2");
         fadePWM(pin_led2, int(intPayload * range_multiplier));
         // Save to EEPROM if restoreAfterReboot is set true
-        if (restoreAfterReboot == true) { EEPROM.put(1, intPayload); EEPROM.commit(); }
+        EEPROM.put(4, intPayload); EEPROM.commit();
     }
-
-        // Toggling Lights (ON / OFF)
-        if (newTopic == topic_led1_toggle) {
-            Serial.println("TOGGLE - LED 1");
-            Serial.println(led1_value);
-
-            if (led1_value != 0) {
-                fadePWM(pin_led1, 0);
-            } else {
-                if (restoreAfterReboot == true) {
-                    int stored_value = 0;
-                    EEPROM.get(0, stored_value);
-                    fadePWM(pin_led1, stored_value * range_multiplier);
-                } else {
-                    fadePWM(pin_led1, 100 * range_multiplier);
-                }
-            }
-        }
 
     if (newTopic == topic_led1_toggle) {
         Serial.println("TOGGLE - LED 1");
         Serial.println(led1_value);
-    if (intPayload == 0) {
-        if (led1_value != 0) { fadePWM(pin_led1, 0); } else { fadePWM(pin_led1, 100 * range_multiplier); }
-    } else {
-        if (restoreAfterReboot == true) {
+        if (intPayload == 0) {
+            if (led1_value != 0) { fadePWM(pin_led1, 0); } else { fadePWM(pin_led1, 100 * range_multiplier); }
+        } else {
             int stored_value = 0;
             EEPROM.get(0, stored_value);
-            fadePWM(pin_led1, stored_value * range_multiplier);
-        } else {
-            fadePWM(pin_led1, 100 * range_multiplier);
-            }
+            //fadePWM(pin_led1, stored_value * range_multiplier);
+            if (led1_value != 0) { fadePWM(pin_led1, 0); } else { fadePWM(pin_led1, stored_value * range_multiplier); }
         }
     }
 
@@ -214,13 +195,10 @@ void callback(char* topic, byte* payload, unsigned int length)
         if (intPayload == 0) {
             if (led2_value != 0) { fadePWM(pin_led2, 0); } else { fadePWM(pin_led2, 100 * range_multiplier); }
         } else {
-            if (restoreAfterReboot == true) {
             int stored_value = 0;
-            EEPROM.get(1, stored_value);
-            fadePWM(pin_led2, stored_value * range_multiplier);
-        } else {
-            fadePWM(pin_led2, 100 * range_multiplier);
-            }
+            EEPROM.get(4, stored_value);
+            //fadePWM(pin_led1, stored_value * range_multiplier);
+            if (led2_value != 0) { fadePWM(pin_led2, 0); } else { fadePWM(pin_led2, stored_value * range_multiplier); }
         }
     }
 }
@@ -234,7 +212,7 @@ void fadePWM(int PIN, int newValue) {
         i = led1_value;
         while (i != newValue) {
             if (newValue < i) {i --;} else {i ++;}
-            if ((i * range_multiplier) < 15) {delay(10);} else {delay(2);}
+            if ((i * range_multiplier) < 15) {delay(16);} else {delay(2);}
             // delay(2);
             analogWrite(PIN, i); 
         }
@@ -246,7 +224,7 @@ void fadePWM(int PIN, int newValue) {
         i = led2_value;
         while (i != newValue) {
             if (newValue < i) {i --;} else {i ++;}
-            if ((i * range_multiplier) < 15) {delay(10);} else {delay(2);}
+            if ((i * range_multiplier) < 15) {delay(16);} else {delay(2);}
             // delay(2)
             analogWrite(PIN, i); 
         }
