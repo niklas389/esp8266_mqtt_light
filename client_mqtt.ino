@@ -48,18 +48,21 @@ void setup() {
             }
         }
 
-        int mem2 = 0;
-        EEPROM.get(4, mem2);
-        if (mem2 =! 0) {
-            Serial.print("EEPROM second value was: ");
-            Serial.println(mem2);
-            if (mem2 > 100) {
-                EEPROM.put(4, 0); 
-                } else {
-                fadePWM(pin_led2, mem2 * range_multiplier);
+        if (single_light == false) {
+            int mem2 = 0;
+            EEPROM.get(4, mem2);
+            if (mem2 =! 0) {
+                Serial.print("EEPROM second value was: ");
+                Serial.println(mem2);
+                if (mem2 > 100) {
+                    EEPROM.put(4, 0); 
+                    } else {
+                    fadePWM(pin_led2, mem2 * range_multiplier);
+                }
             }
-        }
+        }        
     }
+
     
     startWiFi();
     runMQTT();
@@ -212,7 +215,7 @@ void fadePWM(int PIN, int newValue) {
         i = led1_value;
         while (i != newValue) {
             if (newValue < i) {i --;} else {i ++;}
-            if ((i * range_multiplier) < 15) {delay(16);} else {delay(2);}
+            if ((i * range_multiplier) < 15) {delay(10);} else {delay(2);}
             // delay(2);
             analogWrite(PIN, i); 
         }
@@ -224,7 +227,7 @@ void fadePWM(int PIN, int newValue) {
         i = led2_value;
         while (i != newValue) {
             if (newValue < i) {i --;} else {i ++;}
-            if ((i * range_multiplier) < 15) {delay(16);} else {delay(2);}
+            if ((i * range_multiplier) < 15) {delay(10);} else {delay(2);}
             // delay(2)
             analogWrite(PIN, i); 
         }
