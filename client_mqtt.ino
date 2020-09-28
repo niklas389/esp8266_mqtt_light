@@ -89,8 +89,7 @@ void setup() {
     });
 
     
-    startWiFi();
-    ArduinoOTA.begin();
+when    startWiFi();
     runMQTT();
 }
 
@@ -136,6 +135,7 @@ void startWiFi() {
         }
     }
 
+    ArduinoOTA.begin();
     Serial.println("WiFi connected");
     Serial.print("IP adress: ");
     Serial.println(WiFi.localIP());
