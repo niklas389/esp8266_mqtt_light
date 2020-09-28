@@ -24,4 +24,8 @@ const char* topic_led2_state    =   "";
 bool restoreAfterReboot         =   true;
 String clientVer                =   "1.4";
 bool DEBUGGING                  =   true;
-const int pwm_range              =   512;
+const int pwm_range             =   512;
+
+// OTA
+bool OTAenabled                 =   true;
+const char* ota_password        =   "<Password>";

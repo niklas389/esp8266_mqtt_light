@@ -1,3 +1,4 @@
+#include <ArduinoOTA.h>
 #include <ESP_EEPROM.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WiFiMulti.h>
@@ -6,7 +7,6 @@
 
 // Import settings
 #include "config.h"
-#define SERIAL_BAUD 115200
 
 ESP8266WiFiMulti WiFiMulti;
 WiFiClient wifiClient;
@@ -23,13 +23,19 @@ void setup() {
     if (pin_led2 != 0) { single_light = false; }
 
     if (DEBUGGING == true) {
-        Serial.begin(SERIAL_BAUD);
+        Serial.begin(115200);
         splashScreen();
         delay(100);      
     }
 
-    // Set PWM Freq to 19.2 kHz (Same as RPi)
-    analogWriteFreq(19200);
+    if (OTAenabled == true) {
+        ArduinoOTA.setPort(18430); // DEF: 8266
+        ArduinoOTA.setHostname(espName); // DEF: esp8266-[ChipID]
+        ArduinoOTA.setPassword(ota_password); // None by default
+    }
+
+    // Set PWM Freq
+    analogWriteFreq(1000);
     // Set PWM range to XXX (from 1023)
     analogWriteRange(pwm_range);  
 
@@ -63,15 +69,41 @@ void setup() {
         }        
     }
 
+    // OTA Start
+    ArduinoOTA.onStart([]() {
+        Serial.println("Start");
+    });
+    ArduinoOTA.onEnd([]() {
+        Serial.println("\nEnd");
+    });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        Serial.printf("Progress: %u%%\r", (progress / (total / 100)));;Serial.println();
+    });
+    ArduinoOTA.onError([](ota_error_t error) {
+        Serial.printf("Error[%u]: ", error);
+        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+        else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
+
     
     startWiFi();
+    ArduinoOTA.begin();
     runMQTT();
 }
 
 void loop() {
-    if (!client.connected()) { runMQTT(); }
+    if (!client.connected()) { 
+        runMQTT(); 
+        if (OTAenabled == true) {
+            ArduinoOTA.handle();
+        }
+    }
     client.loop();
 }
+
 
 // Establish WiFi-Connection
 void startWiFi() {
@@ -99,16 +131,14 @@ void startWiFi() {
         if (tryCnt > 25) {
             Serial.println("");
             Serial.println("Couldn't connect to WiFi.");
-            delay(30000);
-            tryCnt = 0;
+            delay(3000);
+            ESP.restart();
         }
     }
 
-    Serial.println("");
     Serial.println("WiFi connected");
     Serial.print("IP adress: ");
     Serial.println(WiFi.localIP());
-    delay(100);
 }
 
 // Establish MQTT Connection
@@ -168,15 +198,15 @@ void callback(char* topic, byte* payload, unsigned int length)
     if (newTopic == topic_led1) {
         Serial.println("FADE - LED 1");
         fadePWM(pin_led1, int(intPayload * range_multiplier));
-        // Save to EEPROM if restoreAfterReboot is set true
-        EEPROM.put(0, intPayload); EEPROM.commit();
+        // Save to EEPROM if restoreAfterReboot is set true and value is not 0
+        if (intPayload != 0) { EEPROM.put(0, intPayload); EEPROM.commit(); }
     }
 
     if (newTopic == topic_led2) {
         Serial.println("FADE - LED 2");
         fadePWM(pin_led2, int(intPayload * range_multiplier));
-        // Save to EEPROM if restoreAfterReboot is set true
-        EEPROM.put(4, intPayload); EEPROM.commit();
+        // Save to EEPROM if restoreAfterReboot is set true and value is not 0
+        if ( intPayload != 0) { EEPROM.put(4, intPayload); EEPROM.commit(); }
     }
 
     if (newTopic == topic_led1_toggle) {
