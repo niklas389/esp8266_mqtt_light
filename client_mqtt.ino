@@ -199,14 +199,14 @@ void callback(char* topic, byte* payload, unsigned int length)
         Serial.println("FADE - LED 1");
         fadePWM(pin_led1, int(intPayload * range_multiplier));
         // Save to EEPROM if restoreAfterReboot is set true and value is not 0
-        if (intPayload != 0) { EEPROM.put(0, intPayload); EEPROM.commit(); }
+        if (intPayload > 0 && intPayload < 100) { EEPROM.put(0, intPayload); EEPROM.commit(); }
     }
 
     if (newTopic == topic_led2) {
         Serial.println("FADE - LED 2");
         fadePWM(pin_led2, int(intPayload * range_multiplier));
         // Save to EEPROM if restoreAfterReboot is set true and value is not 0
-        if ( intPayload != 0) { EEPROM.put(4, intPayload); EEPROM.commit(); }
+        if (intPayload > 0 && intPayload < 100) { EEPROM.put(4, intPayload); EEPROM.commit(); }
     }
 
     if (newTopic == topic_led1_toggle) {
