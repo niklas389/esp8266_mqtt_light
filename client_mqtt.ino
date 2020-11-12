@@ -7,7 +7,7 @@
 // Import settings
 #include "config.h"
 
-const String sw_version = "2020.46.2";
+const String sw_version = "2020.46.3";
 
 ESP8266WiFiMulti WiFiMulti;
 WiFiClient wifiClient;
@@ -159,7 +159,7 @@ void runMQTT() {
         } else {
             Serial.println(" >> Failed!");
             Serial.println("Couldn't connect to MQTT-Server.");
-            delay(30000)
+            delay(30000);
         }
 
 
@@ -226,10 +226,19 @@ void pwm_ctrl_led1() {
     Serial.print("New value: ");
     Serial.println(led1_level_set);
 
+    if (led1_state == "ON" && led1_level_set > 0) {
+        // SAVE STATE & BRIGHTNESS
+        client.publish(topic_led1_state, "ON");
+        client.publish(topic_led1_level, String(led1_level_set).c_str());
+    } else {
+        // SAVE STATE ONLY
+        client.publish(topic_led1_state, "OFF");
+        Serial.println("    Saved and published STATE!");
+    }  
+
     while (led1_level != led1_level_set) {
         if (led1_level_set < led1_level) {led1_level --;} else {led1_level ++;}
-        if (led1_level < 15) {delay(10);} else {delay(2);}
-        // delay(2);
+        delay(2);
         analogWrite(pin_led1, led1_level); 
     }
 
@@ -245,14 +254,14 @@ void pwm_ctrl_led1() {
         EEPROM.put(0, 1);
         EEPROM.put(4, led1_level);
         EEPROM.commit();
-        client.publish(topic_led1_state, "ON");
-        client.publish(topic_led1_level, String(led1_level).c_str());
+        // client.publish(topic_led1_state, "ON");
+        // client.publish(topic_led1_level, String(led1_level).c_str());
         Serial.println("    Saved and published LEVEL AND STATE!");
     } else {
         // SAVE STATE ONLY
         EEPROM.put(0, 0);
         EEPROM.commit();
-        client.publish(topic_led1_state, "OFF");
+        // client.publish(topic_led1_state, "OFF");
         led1_level_set = -1;
         Serial.println("    Saved and published STATE!");
     }    
@@ -263,46 +272,62 @@ void pwm_ctrl_led2() {
     Serial.println("#######################################");
     Serial.print("Old value: ");
     Serial.println(led2_level);
-    Serial.print("New value: ");
-    Serial.println(led2_level_set);
 
     if (led2_state == "ON") {    
         //get eeprom value for toggling
-        if (led2_level_set == -1) { EEPROM.get(12, led2_level_set); }
+        if (led2_level_set == -1) {
+            EEPROM.get(12, led2_level_set);
+            Serial.print("    EEPROM value: ");
+            Serial.println(led2_level_set);
+        }     
     } else {
         led2_level_set = 0;
     }
 
+    Serial.print("New value: ");
+    Serial.println(led2_level_set);
+
+    if (led2_state == "ON" && led2_level_set > 0) {
+        // SAVE STATE & BRIGHTNESS
+        client.publish(topic_led2_state, "ON");
+        client.publish(topic_led2_level, String(led2_level_set).c_str());
+    } else {
+        // SAVE STATE ONLY
+        client.publish(topic_led2_state, "OFF");
+        Serial.println("    Saved and published STATE!");
+    }  
+
     while (led2_level != led2_level_set) {
         if (led2_level_set < led2_level) {led2_level --;} else {led2_level ++;}
-        if (led2_level < 15) {delay(10);} else {delay(2);}
-        // delay(2);
+        delay(2);
         analogWrite(pin_led2, led2_level); 
     }
 
-
+    Serial.println("---------------------------------------");
     Serial.print("Faded to: ");
     Serial.println(led2_level);
     Serial.print("New State: ");
     Serial.println(led2_state);
+    Serial.println("---------------------------------------");
 
-    if (led1_state == "ON") {
+    if (led2_state == "ON" && led2_level > 0) {
         // SAVE STATE & BRIGHTNESS
         EEPROM.put(8, 1);
         EEPROM.put(12, led2_level);
         EEPROM.commit();
-        client.publish(topic_led2_state, "ON");
-        client.publish(topic_led2_level, String(led2_level).c_str());
+        // client.publish(topic_led1_state, "ON");
+        // client.publish(topic_led1_level, String(led1_level).c_str());
+        Serial.println("    Saved and published LEVEL AND STATE!");
     } else {
         // SAVE STATE ONLY
         EEPROM.put(8, 0);
         EEPROM.commit();
-        client.publish(topic_led2_state, "OFF");
+        // client.publish(topic_led1_state, "OFF");
         led2_level_set = -1;
+        Serial.println("    Saved and published STATE!");
     }    
-    Serial.println("#######################################");
+    Serial.println("#######################################");   
 }
-
 // Splash Screen with basic info.
 void splashScreen() {
     for (int i=0; i<=5; i++) Serial.println();

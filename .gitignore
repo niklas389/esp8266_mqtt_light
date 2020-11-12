@@ -1,7 +1,7 @@
 /.vscode
 /build
 /config.h
-/config_desk.h
+/config_kitchen.h
 /config_remote_kitchen.h
-/client_mqtt_testing.ino
+/config_tv.h
 /client_mqtt.ino.bak
