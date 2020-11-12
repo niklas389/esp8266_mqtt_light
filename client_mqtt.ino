@@ -1,4 +1,3 @@
-#include <ArduinoOTA.h>
 #include <ESP_EEPROM.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WiFiMulti.h>
@@ -8,15 +7,20 @@
 // Import settings
 #include "config.h"
 
+const String sw_version = "2020.46.2";
+
 ESP8266WiFiMulti WiFiMulti;
 WiFiClient wifiClient;
 PubSubClient client(wifiClient);
 
-// int eeprom_led1 = 0;
-int led1_value = 0;
-int led2_value = 0;
-double range_multiplier = (pwm_range / 100);
 bool single_light = true;
+
+String led1_state = "OFF";
+int led1_level_set = 0;
+int led1_level = 0;
+String led2_state = "OFF";
+int led2_level_set = 0;
+int led2_level = 0;
 
 // SETUP
 void setup() {
@@ -28,66 +32,56 @@ void setup() {
         delay(100);      
     }
 
-    if (OTAenabled == true) {
-        ArduinoOTA.setPort(18430); // DEF: 8266
-        ArduinoOTA.setHostname(espName); // DEF: esp8266-[ChipID]
-        ArduinoOTA.setPassword(ota_password); // None by default
-    }
-
     // Set PWM Freq
     analogWriteFreq(1000);
     // Set PWM range to XXX (from 1023)
     analogWriteRange(pwm_range);  
 
     EEPROM.begin(16);
-
     if (restoreAfterReboot) {
-        int mem1 = 0;
-        EEPROM.get(0, mem1);
-        if (mem1 != 0) {
-            Serial.print("EEPROM first value was: ");
-            Serial.println(mem1);
-            if (mem1 > 100) {
-                EEPROM.put(0, 0); 
-                } else {
-                fadePWM(pin_led1, mem1 * range_multiplier);
-            }
+        int tmp_val1;
+        int tmp_val2;
+
+        EEPROM.get(0, tmp_val1);
+        if (tmp_val1 == 0) {
+            led1_state = "OFF";
+        } else if (tmp_val1 == 1) {
+            led1_state = "ON";
+        } else {
+            EEPROM.put(0, 0);
+        }
+        
+        EEPROM.get(4, tmp_val2);
+        if (tmp_val2 > 0 && tmp_val2 < 101) {
+            led1_level_set = tmp_val2;
+        } else {
+            EEPROM.put(4, 0); 
         }
 
+        pwm_ctrl_led1();
+
         if (single_light == false) {
-            int mem2 = 0;
-            EEPROM.get(4, mem2);
-            if (mem2 =! 0) {
-                Serial.print("EEPROM second value was: ");
-                Serial.println(mem2);
-                if (mem2 > 100) {
-                    EEPROM.put(4, 0); 
-                    } else {
-                    fadePWM(pin_led2, mem2 * range_multiplier);
-                }
-            }
-        }        
+        EEPROM.get(8, tmp_val1);
+        if (tmp_val1 == 0) {
+            led2_state = "OFF";
+        } else if (tmp_val1 == 1) {
+            led2_state = "ON";
+        } else {
+            EEPROM.put(8, 0);
+        }
+        
+        EEPROM.get(12, tmp_val2);
+        if (tmp_val2 > 0 && tmp_val2 < 101) {
+            led2_level_set = tmp_val2;
+        } else {
+            EEPROM.put(12, 0); 
+        }
+
+            pwm_ctrl_led2();
+        }
+
+        EEPROM.commit();
     }
-
-    // OTA Start
-    ArduinoOTA.onStart([]() {
-        Serial.println("Start");
-    });
-    ArduinoOTA.onEnd([]() {
-        Serial.println("\nEnd");
-    });
-    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-        Serial.printf("Progress: %u%%\r", (progress / (total / 100)));;Serial.println();
-    });
-    ArduinoOTA.onError([](ota_error_t error) {
-        Serial.printf("Error[%u]: ", error);
-        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-        else if (error == OTA_END_ERROR) Serial.println("End Failed");
-    });
-
     
     startWiFi();
     runMQTT();
@@ -96,9 +90,6 @@ void setup() {
 void loop() {
     if (!client.connected()) { 
         runMQTT(); 
-        if (OTAenabled == true) {
-            ArduinoOTA.handle();
-        }
     }
     client.loop();
 }
@@ -135,7 +126,6 @@ void startWiFi() {
         }
     }
     
-    ArduinoOTA.begin();
     Serial.println("WiFi connected");
     Serial.print("IP adress: ");
     Serial.println(WiFi.localIP());
@@ -169,132 +159,148 @@ void runMQTT() {
         } else {
             Serial.println(" >> Failed!");
             Serial.println("Couldn't connect to MQTT-Server.");
+            delay(30000)
         }
 
-        client.subscribe(topic_led1);
-        client.subscribe(topic_led1_toggle);
+
+        client.subscribe(topic_led1_switch);
+        client.subscribe(topic_led1_levelCMD);
         //If PIN2 is set to 0 then client will run in Single LED mode
         if (single_light == false) {
-        client.subscribe(topic_led2);
-        client.subscribe(topic_led2_toggle);
+            client.subscribe(topic_led2_switch);
+            client.subscribe(topic_led2_levelCMD);
         }
     }
 }
 
-void callback(char* topic, byte* payload, unsigned int length) 
-{
-    Serial.println();
-    Serial.print("Message arrived Topic: [");
+void callback(char* topic, byte* payload, unsigned int length) {
+    // Serial.println();
+    // Serial.print("Message arrived Topic: [");
     String newTopic = topic;
-    Serial.print(topic);
-    Serial.print("] | Payload: [");
+    // Serial.print(topic);
+    // Serial.print("] | Payload: [");
     payload[length] = '\0';
     String newPayload = String((char *)payload);
-    Serial.print(newPayload);
-    Serial.println("] ");
-    int intPayload = newPayload.toInt();
+    // Serial.print(newPayload);
+    // Serial.println("] ");
 
-    // Fading Lights to received value
-    if (newTopic == topic_led1) {
-        Serial.println("FADE - LED 1");
-        fadePWM(pin_led1, int(intPayload * range_multiplier));
-        // Save to EEPROM if restoreAfterReboot is set true and value is not 0
-        if (intPayload > 0 && intPayload < 100) { EEPROM.put(0, intPayload); EEPROM.commit(); }
+    if (newTopic == topic_led1_switch) {
+        Serial.println("LED1 - Switching State");
+        led1_state = newPayload;
+        pwm_ctrl_led1();
     }
 
-    if (newTopic == topic_led2) {
-        Serial.println("FADE - LED 2");
-        fadePWM(pin_led2, int(intPayload * range_multiplier));
-        // Save to EEPROM if restoreAfterReboot is set true and value is not 0
-        if (intPayload > 0 && intPayload < 100) { EEPROM.put(4, intPayload); EEPROM.commit(); }
+    if (newTopic == topic_led1_levelCMD) {
+        Serial.println("LED1 - Setting Brightness");
+        led1_level_set = newPayload.toInt();
     }
 
-    if (newTopic == topic_led1_toggle) {
-        Serial.println("TOGGLE - LED 1");
-        Serial.println(led1_value);
-        if (intPayload == 0) {
-            if (led1_value != 0) { fadePWM(pin_led1, 0); } else { fadePWM(pin_led1, 100 * range_multiplier); }
-        } else {
-            int stored_value = 0;
-            EEPROM.get(0, stored_value);
-            //fadePWM(pin_led1, stored_value * range_multiplier);
-            if (led1_value != 0) { fadePWM(pin_led1, 0); } else { fadePWM(pin_led1, stored_value * range_multiplier); }
-        }
+    if (newTopic == topic_led2_switch) {
+        Serial.println("LED2 - Switching State");
+        led2_state = newPayload;
+        pwm_ctrl_led2();
     }
 
-    if (newTopic == topic_led2_toggle) {
-        Serial.println("TOGGLE - LED 2");
-        Serial.println(led2_value);
-        if (intPayload == 0) {
-            if (led2_value != 0) { fadePWM(pin_led2, 0); } else { fadePWM(pin_led2, 100 * range_multiplier); }
-        } else {
-            int stored_value = 0;
-            EEPROM.get(4, stored_value);
-            //fadePWM(pin_led1, stored_value * range_multiplier);
-            if (led2_value != 0) { fadePWM(pin_led2, 0); } else { fadePWM(pin_led2, stored_value * range_multiplier); }
-        }
+    if (newTopic == topic_led2_levelCMD) {
+        Serial.println("LED2 - Setting Brightness");
+        led2_level_set = newPayload.toInt();
     }
 }
 
-// Fading PWM values to new (received) values.
-void fadePWM(int PIN, int newValue) {
-    int i;
+void pwm_ctrl_led1() {
+    Serial.println("#######################################");
+    Serial.print("Old value: ");
+    Serial.println(led1_level);
 
-    switch (PIN) {
-    case pin_led1:
-        i = led1_value;
-        while (i != newValue) {
-            if (newValue < i) {i --;} else {i ++;}
-            if ((i * range_multiplier) < 15) {delay(10);} else {delay(2);}
-            // delay(2);
-            analogWrite(PIN, i); 
-        }
-        led1_value = i;
-        publish_lightStatus(pin_led1, led1_value);
-        break;
-
-    case pin_led2:
-        i = led2_value;
-        while (i != newValue) {
-            if (newValue < i) {i --;} else {i ++;}
-            if ((i * range_multiplier) < 15) {delay(10);} else {delay(2);}
-            // delay(2)
-            analogWrite(PIN, i); 
-        }
-        led2_value = i;
-        publish_lightStatus(pin_led2, led2_value);
-        break;
-   
-    default:
-        break;
+    if (led1_state == "ON") {    
+        //get eeprom value for toggling
+        if (led1_level_set == -1) {
+            EEPROM.get(4, led1_level_set);
+            Serial.print("    EEPROM value: ");
+            Serial.println(led1_level_set);
+        }     
+    } else {
+        led1_level_set = 0;
     }
+
+    Serial.print("New value: ");
+    Serial.println(led1_level_set);
+
+    while (led1_level != led1_level_set) {
+        if (led1_level_set < led1_level) {led1_level --;} else {led1_level ++;}
+        if (led1_level < 15) {delay(10);} else {delay(2);}
+        // delay(2);
+        analogWrite(pin_led1, led1_level); 
+    }
+
+    Serial.println("---------------------------------------");
+    Serial.print("Faded to: ");
+    Serial.println(led1_level);
+    Serial.print("New State: ");
+    Serial.println(led1_state);
+    Serial.println("---------------------------------------");
+
+    if (led1_state == "ON" && led1_level > 0) {
+        // SAVE STATE & BRIGHTNESS
+        EEPROM.put(0, 1);
+        EEPROM.put(4, led1_level);
+        EEPROM.commit();
+        client.publish(topic_led1_state, "ON");
+        client.publish(topic_led1_level, String(led1_level).c_str());
+        Serial.println("    Saved and published LEVEL AND STATE!");
+    } else {
+        // SAVE STATE ONLY
+        EEPROM.put(0, 0);
+        EEPROM.commit();
+        client.publish(topic_led1_state, "OFF");
+        led1_level_set = -1;
+        Serial.println("    Saved and published STATE!");
+    }    
+    Serial.println("#######################################");   
 }
 
-// Publishing new PWM-values via MQTT
-void publish_lightStatus (int ledpin, int value) {
-    Serial.print("PIN ");
-    Serial.print(ledpin);
-    Serial.print(" new PWM value: ");
-    Serial.print(value);
-    Serial.print(" (");
-    Serial.print(round(value / range_multiplier));
-    Serial.println(")");
+void pwm_ctrl_led2() {
+    Serial.println("#######################################");
+    Serial.print("Old value: ");
+    Serial.println(led2_level);
+    Serial.print("New value: ");
+    Serial.println(led2_level_set);
 
-    switch (ledpin) {
-    case pin_led1:
-        client.publish(topic_led1_state, String(round(value / range_multiplier)).c_str(), true);
-        Serial.println("Published Light 1 value");
-        break;
-
-    case pin_led2:
-        client.publish(topic_led2_state, String(round(value / range_multiplier)).c_str(), true);
-        Serial.println("Published Light 2 value");
-        break;
-
-    default:
-        Serial.println("publish_lightStatus : DEFAULT CASE!");
-        break;
+    if (led2_state == "ON") {    
+        //get eeprom value for toggling
+        if (led2_level_set == -1) { EEPROM.get(12, led2_level_set); }
+    } else {
+        led2_level_set = 0;
     }
+
+    while (led2_level != led2_level_set) {
+        if (led2_level_set < led2_level) {led2_level --;} else {led2_level ++;}
+        if (led2_level < 15) {delay(10);} else {delay(2);}
+        // delay(2);
+        analogWrite(pin_led2, led2_level); 
+    }
+
+
+    Serial.print("Faded to: ");
+    Serial.println(led2_level);
+    Serial.print("New State: ");
+    Serial.println(led2_state);
+
+    if (led1_state == "ON") {
+        // SAVE STATE & BRIGHTNESS
+        EEPROM.put(8, 1);
+        EEPROM.put(12, led2_level);
+        EEPROM.commit();
+        client.publish(topic_led2_state, "ON");
+        client.publish(topic_led2_level, String(led2_level).c_str());
+    } else {
+        // SAVE STATE ONLY
+        EEPROM.put(8, 0);
+        EEPROM.commit();
+        client.publish(topic_led2_state, "OFF");
+        led2_level_set = -1;
+    }    
+    Serial.println("#######################################");
 }
 
 // Splash Screen with basic info.
@@ -305,7 +311,7 @@ void splashScreen() {
     Serial.print("Device Name: ");
     Serial.println(espName);
     Serial.print("Client Version: ");
-    Serial.println(clientVer);
+    Serial.println(sw_version);
     Serial.print("Debugging enabled: ");
     Serial.println(DEBUGGING);
     Serial.print("Single Light-mode: ");

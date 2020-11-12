@@ -2,3 +2,6 @@
 /build
 /config.h
 /config_desk.h
+/config_remote_kitchen.h
+/client_mqtt_testing.ino
+/client_mqtt.ino.bak
