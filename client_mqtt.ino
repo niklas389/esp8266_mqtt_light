@@ -27,13 +27,19 @@ int fade_interval = 3;
 
 // SETUP
 void setup() {
-    //Single lightMode if pin2 not set
-    if (pin_led2 != 0) { single_light = false; }
-
     //Start serial if debugging is enabled in config
     if (DEBUGGING == true) {
         Serial.begin(115200);
         splashScreen();
+    }
+
+    //Set PWM to 0 to avoid MAX brightness after power loss.
+    analogWrite(pin_led1, 0);
+
+    //Single lightMode if pin2 not set
+    if (pin_led2 != 0) {
+        single_light = false;
+        analogWrite(pin_led2, 0);
     }
 
     // Set PWM Freq
