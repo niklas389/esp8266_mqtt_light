@@ -6,7 +6,7 @@
 
 // Import settings
 // #include "config.h"
-include "config_kitchen.h"
+#include "config_kitchen.h"
 
 const String sw_version = "2021.5.3";
 
