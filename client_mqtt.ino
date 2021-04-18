@@ -5,10 +5,11 @@
 #include <PubSubClient.h>
 
 // Import settings
-// #include "config.h"
-#include "config_kitchen.h"
+#include "config.h"
+// #include "config_tv.h"
+// #include "config_kitchen.h"
 
-const String sw_version = "2021.5.3";
+const String sw_version = "2021.16.5";
 
 ESP8266WiFiMulti WiFiMulti;
 WiFiClient wifiClient;
@@ -16,29 +17,28 @@ PubSubClient client(wifiClient);
 
 bool single_light = true;
 
-bool led1_isOn = false;
-int led1_level_set = 0;
-int led1_level = 0;
-bool led2_isOn = false;
-int led2_level_set = 0;
-int led2_level = 0;
+bool light_P1_on = true;
+int light_P1_target = 0;
+int light_P1_state = 0;
+int light_P1_interval = 2;
+
+bool light_P2_on = true;
+int light_P2_target = 0;
+int light_P2_state = 0;
+int light_P2_interval = 2;
 
 bool fade_led1 = false;
 bool fade_led2 = false;
 
-int fade_interval = 2;
+bool initial_fadingDone = false;
 
 // SETUP
 void setup() {
     //Start serial if debugging is enabled in config
-    if (DEBUGGING == true) {
-        Serial.begin(115200);
-        splashScreen();
-    }
+    if (DEBUGGING == true) {Serial.begin(115200);}
 
     //Set PWM to 0 to avoid MAX brightness after power loss.
     analogWrite(pin_led1, 0);
-
     //Single lightMode if pin2 not set
     if (pin_led2 != 0) {
         single_light = false;
@@ -47,26 +47,28 @@ void setup() {
 
     // Set PWM Freq
     analogWriteFreq(1000);
-    // Set PWM range to XXX (DEF: 1023) (set in config)
-    analogWriteRange(pwm_range);
+    // Set PWM range to XXX (DEF: 1023)
+    analogWriteRange(255);
+    
+    splashScreen();
 
     EEPROM.begin(16);
-    if (restoreAfterReboot) {
+    if (restore_after_PL) {
+        Serial.println(">> reboot - restoring last state...");
         int tmp_val1;
         int tmp_val2;
 
+        // Get last state (ON/OFF)
         EEPROM.get(0, tmp_val1);
-        if (tmp_val1 == 0) {
-            led1_isOn = false;
-        } else if (tmp_val1 == 1) {
-            led1_isOn = true;
+        if (tmp_val1 == 0 || tmp_val1 == 1) {
+            light_P1_on = tmp_val1;
         } else {
             EEPROM.put(0, 0);
         }
-
+        // Get last set brightness value and reset if out of range.
         EEPROM.get(4, tmp_val2);
         if (tmp_val2 > 0 && tmp_val2 < 101) {
-            led1_level_set = tmp_val2;
+            light_P1_target = tmp_val2;
         } else {
             EEPROM.put(4, 0);
         }
@@ -76,18 +78,17 @@ void setup() {
         tmp_val2 = 0;
 
         if (single_light == false) {
+            // Get last state (ON/OFF)
             EEPROM.get(8, tmp_val1);
-            if (tmp_val1 == 0) {
-                led2_isOn = false;
-            } else if (tmp_val1 == 1) {
-                led2_isOn = true;
+            if (tmp_val1 == 0 || tmp_val1 == 1) {
+                light_P2_on = tmp_val1;
             } else {
                 EEPROM.put(8, 0);
             }
-
+            // Get last set brightness value and reset if out of range
             EEPROM.get(12, tmp_val2);
             if (tmp_val2 > 0 && tmp_val2 < 101) {
-                led2_level_set = tmp_val2;
+                light_P2_target = tmp_val2;
             } else {
                 EEPROM.put(12, 0);
             }
@@ -95,111 +96,118 @@ void setup() {
         }
 
         EEPROM.commit();
+    } else {
+        initial_fadingDone = true;
     }
-
-    startWiFi();
-    runMQTT();
 }
 
 unsigned long current_millis = 0;
-long prev_millis = 0;
+long light1_prevMillis = 0;
+long light2_prevMillis = 0;
 
 void loop() {
-    if (!client.connected()) {
-        runMQTT();
+    // Start WiFi & MQTT after restoring last state finished
+    if (initial_fadingDone) {
+        if (!WiFi.isConnected()) {
+            startWiFi();
+            runMQTT();
+        } else if (!client.connected()) {
+            runMQTT();
+        }
     }
-    
+
     client.loop();
 
     //Fade without blocking (delay)
     current_millis = millis();
-    if (current_millis - prev_millis > fade_interval) {
-        prev_millis = current_millis;
-        if (fade_led1 == true) {vFade_LED1();}
-        if (fade_led2 == true) {vFade_LED2();}
-    }
+    if (fade_led1 == true && (current_millis - light1_prevMillis > light_P1_interval)) {vFade_LED1(); light1_prevMillis = current_millis;}
+    if (fade_led2 == true && (current_millis - light2_prevMillis > light_P2_interval)) {vFade_LED2(); light2_prevMillis = current_millis;}
 }
 
+bool fadeSpeed1 = false;
 void vFade_LED1() {
-    if (led1_level_set < led1_level) {
-        led1_level--;
-    } else {
-        led1_level++;
+    if (fadeSpeed1 == false) {
+        int diff = light_P1_state > light_P1_target ? light_P1_state - light_P1_target : light_P1_target - light_P1_state;
+        Serial.println(diff);
+        if (diff < 35)  {light_P1_interval = 8; Serial.println("L1 - Slow");} else {light_P1_interval = 2; Serial.println("L1 - Fast");}
+        fadeSpeed1 = true;
     }
-    analogWrite(pin_led1, led1_level);
 
-    if (led1_level == led1_level_set) {
+    if (light_P1_target < light_P1_state) {
+        light_P1_state--;
+    } else {
+        light_P1_state++;
+    }    
+    analogWrite(pin_led1, light_P1_state);
+
+    if (light_P1_state == light_P1_target) {
         fade_led1 = false;
-        Serial.println("fade_led1 set to false");
+        Serial.println("Light 1 fading done!");
+        Serial.print("Target: ");
+        Serial.print(light_P1_target);
+        Serial.print(" | New State: ");
+        Serial.println(light_P1_state);
 
-        Serial.println("---------------------------------------");
-        Serial.print("LEVEL: ");
-        Serial.print(led1_level);
-        Serial.print(" | LED ON: ");
-        Serial.println(led1_isOn);
-        Serial.println("---------------------------------------");
-
-        if (led1_isOn == true && led1_level_set > 0) {
+        if (light_P1_on == true && light_P1_state > 0) {
             // SAVE STATE & BRIGHTNESS
             EEPROM.put(0, 1);
-            EEPROM.put(4, led1_level);
-            EEPROM.commit();
-
+            EEPROM.put(4, light_P1_state);
+            //Publish new brightness and state
             client.publish(topic_led1_state, "ON");
-            client.publish(topic_led1_level, String(led1_level_set).c_str());
+            client.publish(topic_led1_level, String(light_P1_state).c_str());
         } else {
             // SAVE STATE ONLY
             EEPROM.put(0, 0);
-            EEPROM.commit();
-            // client.publish(topic_led1_state, "OFF");
             client.publish(topic_led1_state, "OFF");
-            Serial.println("    Saved and published STATE!");
         }
+            EEPROM.commit();
 
-        led1_level_set = -1;
-        Serial.println("#######################################");
+        initial_fadingDone = true;
+        light_P1_target = -1;
+        fadeSpeed1 = false;
     }
 }
 
+bool fadeSpeed2 = false;
 void vFade_LED2() {
-    if (led2_level_set < led2_level) {
-        led2_level--;
-    } else {
-        led2_level++;
+    if (fadeSpeed2 == false) {
+        int diff = light_P2_state > light_P2_target ? light_P2_state - light_P2_target : light_P2_target - light_P2_state;
+        Serial.println(diff);
+        if (diff < 35)  {light_P2_interval = 8; Serial.println("L2 - Slow");} else {light_P2_interval = 2; Serial.println("L2 - Fast");}
+        fadeSpeed2 = true;
     }
-    analogWrite(pin_led2, led2_level);
 
-    if (led2_level == led2_level_set) {
+    if (light_P2_target < light_P2_state) {
+        light_P2_state--;
+    } else {
+        light_P2_state++;
+    }
+    analogWrite(pin_led2, light_P2_state);
+
+    if (light_P2_state == light_P2_target) {
         fade_led2 = false;
-        Serial.println("fade_led2 set to false");
+        Serial.println("Light 2 fading done!");
+        Serial.print("Target: ");
+        Serial.print(light_P2_target);
+        Serial.print(" | New State: ");
+        Serial.println(light_P2_state);
 
-        Serial.println("---------------------------------------");
-        Serial.print("LEVEL: ");
-        Serial.print(led2_level);
-        Serial.print(" | LED ON: ");
-        Serial.println(led2_isOn);
-        Serial.println("---------------------------------------");
-
-        if (led2_isOn == true && led2_level_set > 0) {
+        if (light_P2_on == true && light_P2_state > 0) {
             // SAVE STATE & BRIGHTNESS
             EEPROM.put(8, 1);
-            EEPROM.put(12, led2_level);
-            EEPROM.commit();
-
+            EEPROM.put(12, light_P2_state);
+            //Publish new brightness and state
             client.publish(topic_led2_state, "ON");
-            client.publish(topic_led2_level, String(led2_level_set).c_str());
+            client.publish(topic_led2_level, String(light_P2_state).c_str());
         } else {
             // SAVE STATE ONLY
             EEPROM.put(8, 0);
-            EEPROM.commit();
-            // client.publish(topic_led1_state, "OFF");
-
             client.publish(topic_led2_state, "OFF");
-            Serial.println("    Saved and published STATE!");
         }
+            EEPROM.commit();
 
-        led2_level_set = -1;
-        Serial.println("#######################################");
+        light_P2_target = -1;
+        fadeSpeed2 = false;
     }
 }
 
@@ -220,20 +228,19 @@ void startWiFi() {
     int tryCnt = 0;
     Serial.print("Connecting...");
     while (WiFiMulti.run() != WL_CONNECTED) {
-        delay(100);
+        delay(250);
         Serial.print(".");
         tryCnt++;
 
         if (tryCnt > 25) {
             Serial.println("");
-            Serial.println("Couldn't connect to WiFi.");
+            Serial.println("(!) Couldn't connect to WiFi");
             delay(3000);
             ESP.restart();
         }
     }
 
-    Serial.println("WiFi connected");
-    Serial.print("IP adress: ");
+    Serial.print("Connected! - IP adress: ");
     Serial.println(WiFi.localIP());
 }
 
@@ -257,13 +264,13 @@ void runMQTT() {
     client.setCallback(callback);
 
     while (!client.connected()) {
-        Serial.print("Attempting connection...");
+        Serial.println("Attempting connection...");
 
         if (client.connect(espName, mqtt_user, mqtt_password)) {
-            Serial.println(" >> Success!");
-            Serial.println(client.state());
+            Serial.println(">> Success - we're connected!");
+            // Serial.println((client.state());
         } else {
-            Serial.println(" >> Failed! (Couldn't connect to MQTT-Server)");
+            Serial.println("(!) Failed - (Couldn't connect to MQTT-Server)");
             Serial.println(" (Retrying in 30 seconds)");
             delay(30000);
         }
@@ -281,60 +288,62 @@ void runMQTT() {
 
 void callback(char *topic, byte *payload, unsigned int length)
 {
-    // Serial.println();
-    // Serial.print("Message arrived Topic: [");
+    Serial.println();
+    Serial.print("Message arrived Topic: [");
     String newTopic = topic;
-    // Serial.print(topic);
-    // Serial.print("] | Payload: [");
+    Serial.print(topic);
+    Serial.print("] | Payload: [");
     payload[length] = '\0';
     String newPayload = String((char *)payload);
-    // Serial.print(newPayload);
-    // Serial.println("] ");
+    Serial.print(newPayload);
+    Serial.println("] ");
 
     if (newTopic == topic_led1_switch) {
-        Serial.print("LED1 - Switching State: ");
-        Serial.println(newPayload);
+        Serial.println("Light 1 - Switching state");
         if (newPayload == "ON") {
-            led1_isOn = true;
-            if (led1_level_set == -1) {
-                EEPROM.get(4, led1_level_set); //get eeprom value for toggling
-                Serial.print("    EEPROM value: ");
-                Serial.println(led1_level_set);
+            light_P1_on = true;
+
+            if (light_P1_target == -1) {
+                EEPROM.get(4, light_P1_target); //get eeprom value for toggling
+                Serial.print("Toggling - Last state was: ");
+                Serial.println(light_P1_target);
             }
         } else {
-                led1_isOn = false;
-                led1_level_set = 0;
+                light_P1_on = false;
+                light_P1_target = 0;
         }
+
         fade_led1 = true;
     }
 
     if (newTopic == topic_led1_levelCMD) {
-        Serial.print("LED1 - Setting Brightness to: ");
-        led1_level_set = newPayload.toInt();
-        Serial.println(led1_level_set);
+        light_P1_target = newPayload.toInt();
+        Serial.print("Light 1 - New target brightness: ");
+        Serial.println(light_P1_target);
     }
 
     if (newTopic == topic_led2_switch) {
-        Serial.print("LED2 - Switching State: ");
-        Serial.println(newPayload);
+        Serial.println("Light 2 - Switching state");
         if (newPayload == "ON") {
-            led2_isOn = true;
-            if (led2_level_set == -1) {
-                EEPROM.get(12, led2_level_set); //get eeprom value for toggling
-                Serial.print("    EEPROM value: ");
-                Serial.println(led2_level_set);
+            light_P2_on = true;
+
+            if (light_P2_target == -1) {
+                EEPROM.get(12, light_P2_target); //get eeprom value for toggling
+                Serial.print("Toggling - Last state was: ");
+                Serial.println(light_P2_target);
             }
         } else {
-                led2_isOn = false;
-                led2_level_set = 0;
+                light_P2_on = false;
+                light_P2_target = 0;
         }
+
         fade_led2 = true;
     }
 
     if (newTopic == topic_led2_levelCMD) {
-        Serial.print("LED2 - Setting Brightness to: ");
-        led2_level_set = newPayload.toInt();
-        Serial.println(led2_level_set);
+        light_P2_target = newPayload.toInt();
+        Serial.print("Light 2 - New target brightness: ");
+        Serial.println(light_P2_target);
     }
 }
 
@@ -344,12 +353,12 @@ void splashScreen() {
         Serial.println();
     Serial.println("#######################################");
     Serial.println("ESP8266 Light Controller");
-    Serial.println("Device:");
+    Serial.println("    ### Device ###");
     Serial.print("Device Name: ");
     Serial.println(espName);
     Serial.print("Client Version: ");
     Serial.println(sw_version);
-    Serial.println("Config:");
+    Serial.println("    ### Config ###");
     Serial.print("Debugging enabled: ");
     Serial.println(DEBUGGING);
     Serial.print("Single-Light mode: ");
