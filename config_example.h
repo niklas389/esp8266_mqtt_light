@@ -26,6 +26,5 @@ const char* topic_led2_level        =   "";
 const char* topic_led2_levelCMD     =   "";
 
 // Misc
-bool restoreAfterReboot             =   false;
+bool restore_after_PL               =   false;          //restore last state after PowerLoss
 bool DEBUGGING                      =   true;
-const int pwm_range                 =   255
